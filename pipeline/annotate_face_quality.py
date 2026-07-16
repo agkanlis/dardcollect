@@ -208,9 +208,9 @@ def _generate_ofiq_attr_json(crop_path: Path, models, cfg) -> bool:
             )
             if len(frame_scores) % 10 == 0:
                 logger.info("    (sampled %d frames so far...)", len(frame_scores))
-            frame_idx += 1
             if cfg.max_frames > 0 and len(frame_scores) >= cfg.max_frames:
                 break
+        frame_idx += 1
 
     if not frame_scores:
         logger.warning("  No frames scored for %s", crop_path.name)

@@ -345,9 +345,9 @@ def score_video(
             # Log progress every 10 frames sampled
             if len(frame_scores) % 10 == 0:
                 logger.info("    (sampled %d frames so far...)", len(frame_scores))
-            frame_idx += 1
             if max_frames > 0 and len(frame_scores) >= max_frames:
                 break
+        frame_idx += 1
 
     if not frame_scores:
         logger.warning("No frames scored for %s", crop_path.name)
