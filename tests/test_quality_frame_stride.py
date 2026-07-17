@@ -11,6 +11,7 @@ models, GPU, or real video files are required.
 """
 
 import json
+import logging
 import uuid
 from types import SimpleNamespace
 from typing import cast
@@ -117,3 +118,52 @@ def test_generate_ofiq_attr_json_samples_every_stride_th_frame(
     expected = _expected_indices(n_frames, frame_stride, max_frames)
     assert [f["frame_index"] for f in written["frame_data"]] == expected
     assert written["frames_scored"] == len(expected)
+
+
+def _fail_every_other_frame(monkeypatch):
+    """Make `score_frame_all` raise on every second call."""
+    calls = {"n": 0}
+
+    def flaky(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] % 2 == 0:
+            raise RuntimeError("simulated scoring failure")
+        return _fake_frame_scores()
+
+    monkeypatch.setattr(quality, "score_frame_all", flaky)
+
+
+def test_failed_frames_are_skipped_not_counted_as_scored(tmp_path, monkeypatch, caplog):
+    """A frame whose scoring raises must be absent from frame_data, and reported."""
+    crop_path = _make_crop(tmp_path, n_frames=20, monkeypatch=monkeypatch)
+    _fail_every_other_frame(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger=quality.__name__):
+        result = quality.score_video(
+            crop_path=crop_path,
+            models=_models(),
+            frame_stride=5,
+            max_frames=0,
+            overwrite=True,
+        )
+
+    # Sampled frames are 0, 5, 10, 15; calls 2 and 4 (frames 5 and 15) raise.
+    assert result is not None
+    assert [f["frame_index"] for f in result["frame_data"]] == [0, 10]
+    assert result["frames_scored"] == 2
+    assert "2 of 4 sampled frames failed to score" in caplog.text
+
+
+def test_no_warning_when_every_frame_scores(tmp_path, monkeypatch, caplog):
+    crop_path = _make_crop(tmp_path, n_frames=20, monkeypatch=monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger=quality.__name__):
+        quality.score_video(
+            crop_path=crop_path,
+            models=_models(),
+            frame_stride=5,
+            max_frames=0,
+            overwrite=True,
+        )
+
+    assert "failed to score" not in caplog.text

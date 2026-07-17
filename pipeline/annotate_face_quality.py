@@ -199,18 +199,28 @@ def _generate_ofiq_attr_json(crop_path: Path, models, cfg) -> bool:
     # Score frames
     frame_scores: list[dict] = []
     frame_idx = 0
+    frames_failed = 0
 
     for ofiq_frame in frames:
         arcface_frame = arcface_from_ofiq_frame(ofiq_frame) if has_arcface_annotation else None
         if frame_idx % cfg.frame_stride == 0:
-            _score_and_append(
+            if not _score_and_append(
                 ofiq_frame, arcface_frame, frame_idx, crop_path.name, models, frame_scores
-            )
+            ):
+                frames_failed += 1
             if len(frame_scores) % 10 == 0:
                 logger.info("    (sampled %d frames so far...)", len(frame_scores))
             if cfg.max_frames > 0 and len(frame_scores) >= cfg.max_frames:
                 break
         frame_idx += 1
+
+    if frames_failed:
+        logger.warning(
+            "  %s: %d of %d sampled frames failed to score",
+            crop_path.name,
+            frames_failed,
+            frames_failed + len(frame_scores),
+        )
 
     if not frame_scores:
         logger.warning("  No frames scored for %s", crop_path.name)

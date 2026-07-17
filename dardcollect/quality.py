@@ -241,21 +241,30 @@ def _score_and_append(
     video_name: str,
     models: QualityModels,
     out: list,
-) -> None:
+) -> bool:
+    """Score one frame and append it to ``out``.
+
+    Returns True if the frame was scored, False if scoring raised. Callers are
+    expected to count the failures and surface them, so that a run which
+    silently scores fewer frames than requested is visible.
+    """
     global _provider_logged
     try:
         frame_scores = score_frame_all(ofiq_frame, models, arcface_frame)
-        frame_scores["frame_index"] = frame_idx
-        out.append(frame_scores)
-
-        # Log actual execution provider on first frame
-        if not _provider_logged:
-            _provider_logged = True
-            providers = models.magface.get_providers()
-            if providers:
-                logger.info("  Actual execution provider during inference: %s", providers[0])
     except Exception as exc:
         logger.debug("Error scoring frame %d of %s: %s", frame_idx, video_name, exc)
+        return False
+
+    frame_scores["frame_index"] = frame_idx
+    out.append(frame_scores)
+
+    # Log actual execution provider on first frame
+    if not _provider_logged:
+        _provider_logged = True
+        providers = models.magface.get_providers()
+        if providers:
+            logger.info("  Actual execution provider during inference: %s", providers[0])
+    return True
 
 
 def score_video(
@@ -332,6 +341,7 @@ def score_video(
 
     frame_scores: list[dict] = []
     frame_idx = 0
+    frames_failed = 0
 
     logger.info("  → Reading frames and computing quality scores...")
     for ofiq_frame in frames:
@@ -339,15 +349,24 @@ def score_video(
             arcface_from_ofiq_frame(ofiq_frame) if has_arcface_annotation else None
         )
         if frame_idx % frame_stride == 0:
-            _score_and_append(
+            if not _score_and_append(
                 ofiq_frame, arcface_frame, frame_idx, crop_path.name, models, frame_scores
-            )
+            ):
+                frames_failed += 1
             # Log progress every 10 frames sampled
             if len(frame_scores) % 10 == 0:
                 logger.info("    (sampled %d frames so far...)", len(frame_scores))
             if max_frames > 0 and len(frame_scores) >= max_frames:
                 break
         frame_idx += 1
+
+    if frames_failed:
+        logger.warning(
+            "%s: %d of %d sampled frames failed to score",
+            crop_path.name,
+            frames_failed,
+            frames_failed + len(frame_scores),
+        )
 
     if not frame_scores:
         logger.warning("No frames scored for %s", crop_path.name)
