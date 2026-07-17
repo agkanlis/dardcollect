@@ -422,7 +422,13 @@ def process_video(
             )
 
         # Write video using moviepy
-        success = _write_video_with_moviepy(frames_to_write, ofiq_path, fps)
+        success = _write_video_with_moviepy(
+            frames_to_write,
+            ofiq_path,
+            fps,
+            video_codec=face_config.video_codec,
+            audio_codec=face_config.audio_codec,
+        )
 
         if not success:
             logger.error("Failed to write video for %s — stopping.", stem)

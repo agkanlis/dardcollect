@@ -33,6 +33,8 @@ def _extract_one_clip(
     video_info: dict,
     archive_org_id: str | None,
     archive_org_url: str | None,
+    video_codec: str = "libx264",
+    audio_codec: str = "aac",
 ) -> dict:
     """Build the clip metadata + extract one clip (the heavy moviepy/ffmpeg call).
 
@@ -75,7 +77,15 @@ def _extract_one_clip(
 
     logger.info("  Extracting: %s (%.1fs)", clip_name, meta["duration_seconds"])
     t0 = time.time()
-    success = extract_clip(read_path, clip_path, seg.start_frame, seg.end_frame, fps)
+    success = extract_clip(
+        read_path,
+        clip_path,
+        seg.start_frame,
+        seg.end_frame,
+        fps,
+        video_codec=video_codec,
+        audio_codec=audio_codec,
+    )
     elapsed = time.time() - t0
     if success:
         logger.info("  Extraction took %.2fs", elapsed)
@@ -121,6 +131,8 @@ def extract_clips(
                 video_info,
                 archive_org_id,
                 archive_org_url,
+                clip_config.video_codec,
+                clip_config.audio_codec,
             )
             for seg in filtered
         ]
@@ -134,6 +146,8 @@ def extract_clips(
         video_info=video_info,
         archive_org_id=archive_org_id,
         archive_org_url=archive_org_url,
+        video_codec=clip_config.video_codec,
+        audio_codec=clip_config.audio_codec,
     )
     with ThreadPoolExecutor(max_workers=workers) as ex:
         return list(ex.map(fn, filtered))

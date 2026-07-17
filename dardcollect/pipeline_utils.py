@@ -444,6 +444,8 @@ def _write_video_with_moviepy(
     frames: "list[np.ndarray]",
     output_path: Path,
     fps: float,
+    video_codec: str = "libx264",
+    audio_codec: str = "aac",
 ) -> bool:
     """Write frames to MP4 using moviepy (same as extracted_person_clips).
 
@@ -451,6 +453,11 @@ def _write_video_with_moviepy(
         frames: List of BGR numpy arrays (H, W, 3)
         output_path: Output MP4 file path
         fps: Frames per second
+        video_codec: ffmpeg video encoder. Defaults to the software encoder.
+            Hardware encoders (e.g. "h264_nvenc") need an ffmpeg build that has
+            them: moviepy's bundled imageio-ffmpeg does not, so point
+            IMAGEIO_FFMPEG_EXE at a system ffmpeg first.
+        audio_codec: ffmpeg audio encoder.
 
     Returns:
         True if successful, False otherwise
@@ -471,8 +478,8 @@ def _write_video_with_moviepy(
 
         clip.write_videofile(
             str(output_path),
-            codec="libx264",
-            audio_codec="aac",
+            codec=video_codec,
+            audio_codec=audio_codec,
             logger=None,
             threads=4,
         )
@@ -495,6 +502,8 @@ def extract_clip(
     start_frame: int,
     end_frame: int,
     fps: float,
+    video_codec: str = "libx264",
+    audio_codec: str = "aac",
 ) -> bool:
     """Extract a clip from a video file with audio.
 
@@ -525,8 +534,8 @@ def extract_clip(
             new_clip = video.subclipped(start_t, end_t)
             new_clip.write_videofile(
                 str(temp_clip),
-                codec="libx264",
-                audio_codec="aac",
+                codec=video_codec,
+                audio_codec=audio_codec,
                 temp_audiofile=str(temp_audio),
                 remove_temp=True,
                 logger=None,

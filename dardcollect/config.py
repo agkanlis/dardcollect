@@ -203,6 +203,11 @@ class ClipExtractionConfig:
     # the main thread (no CSV race). Opt-in; behavior-preserving.
     parallel_clip_extraction: bool = False
     max_extraction_workers: int = 3
+    # Hardware encoders (e.g. "h264_nvenc") require an ffmpeg build that has them;
+    # moviepy's bundled imageio-ffmpeg does not, so set IMAGEIO_FFMPEG_EXE to a
+    # system ffmpeg when changing this.
+    video_codec: str = "libx264"
+    audio_codec: str = "aac"
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "ClipExtractionConfig":
@@ -253,6 +258,8 @@ class ClipExtractionConfig:
             readahead_queue_frames=cfg.get("readahead_queue_frames", 32),
             parallel_clip_extraction=cfg.get("parallel_clip_extraction", False),
             max_extraction_workers=cfg.get("max_extraction_workers", 3),
+            video_codec=cfg.get("video_codec", "libx264"),
+            audio_codec=cfg.get("audio_codec", "aac"),
         )
 
 
@@ -320,6 +327,12 @@ class FaceCropConfig:
     min_free_disk_gb: float = 2.0
     include_audio: bool = True
     max_overlap_iou: float = 0.3
+    # ── Encoding ─────────────────────────────────────────────────────────────────
+    # Hardware encoders (e.g. "h264_nvenc") require an ffmpeg build that has them;
+    # moviepy's bundled imageio-ffmpeg does not, so set IMAGEIO_FFMPEG_EXE to a
+    # system ffmpeg when changing this.
+    video_codec: str = "libx264"
+    audio_codec: str = "aac"
 
     @classmethod
     def from_yaml(cls, yaml_path: str, section: str = "face_crop_extraction") -> "FaceCropConfig":
@@ -356,6 +369,8 @@ class FaceCropConfig:
             min_free_disk_gb=cfg.get("min_free_disk_gb", 2.0),
             include_audio=cfg.get("include_audio", True),
             max_overlap_iou=cfg.get("max_overlap_iou", 0.3),
+            video_codec=cfg.get("video_codec", "libx264"),
+            audio_codec=cfg.get("audio_codec", "aac"),
         )
 
 
