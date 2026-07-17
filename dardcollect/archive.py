@@ -11,6 +11,7 @@ after the module is imported.
 
 import logging
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -36,6 +37,68 @@ RETRY_DELAY: float = 5.0
 size_lock = threading.Lock()
 csv_lock = threading.Lock()
 _cancel = threading.Event()
+
+
+# ── AV1 → H.264 transcode ─────────────────────────────────────────────────────
+
+
+def _transcode_av1_to_h264(path: Path) -> int:
+    """Transcode *path* to H.264 in place if (and only if) it is AV1-encoded.
+
+    AV1 cannot be decoded by the OpenCV/ffmpeg build used here, which would break
+    every downstream stage (person detection, face crops, frames). This probes the
+    video codec with ffprobe and, for AV1 only, re-encodes to H.264 (libx264),
+    keeping the same filename. Best-effort: on any ffprobe/ffmpeg failure the
+    original file is left untouched.
+
+    Returns:
+        int: New file size in bytes if it was transcoded, else -1 (unchanged).
+    """
+    try:
+        codec = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        ).stdout.strip()
+    except Exception as e:  # ffprobe missing / unreadable file
+        logger.warning("[transcode] ffprobe failed for %s: %s", path.name, e)
+        return -1
+
+    if codec != "av1":
+        return -1
+
+    out = path.with_name(path.stem + ".h264tmp.mp4")
+    logger.info("[transcode] AV1 → H.264: %s", path.name)
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-y", "-nostdin", "-i", str(path),
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k", str(out),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            out.replace(path)
+            new_size = path.stat().st_size
+            logger.info("[transcode] done: %s (%.0f MB)", path.name, new_size / 1024**2)
+            return new_size
+        logger.warning("[transcode] ffmpeg failed for %s — keeping original AV1", path.name)
+    except Exception as e:
+        logger.warning("[transcode] error for %s: %s — keeping original", path.name, e)
+    finally:
+        if out.exists():
+            try:
+                out.unlink()
+            except OSError:
+                pass
+    return -1
 
 
 # ── Download primitives ───────────────────────────────────────────────────────
@@ -253,6 +316,14 @@ def download_item(
                 "limit_reached": False,
                 "metadata": None,
             }
+
+        # Transcode AV1 → H.264 so OpenCV-based stages can decode it. H.264 is
+        # usually larger than AV1, so correct the running size total by the delta.
+        if media_type == "video":
+            new_size = _transcode_av1_to_h264(target_path)
+            if new_size >= 0:
+                with size_lock:
+                    DOWNLOAD_STATE["size"] += new_size - file_size
 
         metadata = _build_fair_metadata(identifier, item, filename, media_type)
         metadata["download_stage_script"] = "pipeline/download_media_from_archive.py"
