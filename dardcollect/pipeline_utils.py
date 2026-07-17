@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -555,3 +556,131 @@ def extract_clip(
         _log.error("Cannot extract clip %s: %s — removing incomplete files.", output_path.name, e)
         _cleanup_files(temp_clip, temp_audio)
         return False
+
+
+def _ffmpeg_keyframe_chroma(
+    video_path: "Path | str", size: int = 64, max_frames: int = 240
+) -> "float | None":
+    """Fast colour score: decode only keyframes at low resolution via ffmpeg.
+
+    Decoding just I-frames (``-skip_frame nokey``) at ``size×size`` avoids the
+    full-resolution random seeks of the OpenCV path — each of which decodes from a
+    distant keyframe — making it ~10–50× faster on feature-length films. Up to
+    *max_frames* keyframes (from the start) are sampled; colour is a whole-film
+    property in practice, so this is representative.
+
+    Returns:
+        float: mean per-pixel chroma (0–255) if keyframes were decoded; -1.0 if
+        ffmpeg ran but decoded nothing (unreadable); or None if ffmpeg could not
+        be run at all (caller should fall back to the OpenCV path).
+    """
+    try:
+        raw = subprocess.run(
+            [
+                "ffmpeg",
+                "-skip_frame",
+                "nokey",
+                "-i",
+                str(video_path),
+                "-an",
+                "-vf",
+                f"scale={size}:{size}",
+                "-frames:v",
+                str(max_frames),
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "-v",
+                "quiet",
+                "-",
+            ],
+            capture_output=True,
+            timeout=300,
+        ).stdout
+    except Exception:
+        return None  # ffmpeg missing / errored → fall back to OpenCV
+
+    frame_bytes = size * size * 3
+    n = len(raw) // frame_bytes
+    if n == 0:
+        return -1.0  # ran but decoded nothing → unreadable
+    arr = np.frombuffer(raw[: n * frame_bytes], dtype=np.uint8).reshape(n, size, size, 3)
+    arr = arr.astype(np.int16)
+    return float((arr.max(axis=3) - arr.min(axis=3)).mean())
+
+
+def video_color_score(video_path: "Path | str", sample_frames: int = 30) -> float:
+    """Measure how colourful a video is from its actual pixels.
+
+    Samples up to *sample_frames* frames evenly across the video and, for each,
+    averages the per-pixel chroma — ``max(B, G, R) - min(B, G, R)`` — which is
+    ~0 for neutral grey / black-and-white footage and grows with colour. The
+    mean over all sampled frames is returned on a 0–255 scale.
+
+    Note: a uniform sepia/tint reads as mildly "colourful" — this measures
+    chroma, not whether the colour is meaningful.
+
+    Args:
+        video_path: Path to the video file.
+        sample_frames: Number of frames to sample across the clip.
+
+    Returns:
+        float: Mean per-pixel chroma in [0, 255], or **-1.0 if no frame could be
+        decoded** (e.g. an AV1 file on a platform without AV1 support). Callers
+        must treat a negative result as "unreadable / unknown", NOT as
+        black-and-white — a decode failure is not the same as neutral footage.
+    """
+    # Fast path: ffmpeg keyframe decode at low resolution (≈10–50× faster than the
+    # full-resolution OpenCV seeking below). Falls through only if ffmpeg can't run.
+    fast = _ffmpeg_keyframe_chroma(video_path)
+    if fast is not None:
+        return fast
+
+    cap = cv2.VideoCapture(str(video_path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        # Frame count unavailable — read the first *sample_frames* sequentially.
+        indices = list(range(sample_frames))
+    else:
+        step = max(1, total // max(1, sample_frames))
+        indices = list(range(0, total, step))[:sample_frames]
+
+    scores: list[float] = []
+    for idx in indices:
+        if total > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            scores.append(0.0)  # single-channel → no colour by definition
+            continue
+        f = frame.astype(np.int16)
+        chroma = f.max(axis=2) - f.min(axis=2)
+        scores.append(float(chroma.mean()))
+    cap.release()
+
+    # Empty ⇒ not a single frame decoded ⇒ "unreadable", signalled as -1.0
+    # (distinct from 0.0, which means decoded-but-neutral / black-and-white).
+    return float(np.mean(scores)) if scores else -1.0
+
+
+def is_color_video(
+    video_path: "Path | str", threshold: float = 10.0, sample_frames: int = 30
+) -> bool:
+    """Return True if the video looks like colour (not black-and-white).
+
+    Thin wrapper over :func:`video_color_score`. ``threshold`` is the minimum
+    mean chroma (0–255) to count as colour; ~10 separates neutral B&W film from
+    colour in practice — raise it to also exclude lightly tinted/sepia footage.
+
+    Args:
+        video_path: Path to the video file.
+        threshold: Minimum mean chroma to classify as colour.
+        sample_frames: Number of frames to sample.
+
+    Returns:
+        bool: True if mean chroma ≥ *threshold*.
+    """
+    return video_color_score(video_path, sample_frames=sample_frames) >= threshold
