@@ -19,30 +19,59 @@ gitignored — it is a derived artifact, not source).
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Order matters: substitute specific media-subdir paths before the generic
-# base-output dir, and derived DARD/ outputs so they don't collide with the
-# media substitutions.
-SUBSTITUTIONS: list[tuple[str, str]] = [
-    ("DARD/archive_org_public_domain/videos", "tests/fixtures/media/videos"),
-    ("DARD/archive_org_public_domain/images", "tests/fixtures/media/images"),
-    ("DARD/archive_org_public_domain/audio", "tests/fixtures/media/audio"),
-    ("DARD/archive_org_public_domain/texts", "tests/fixtures/media/texts"),
-    ("DARD/archive_org_public_domain", "tests/fixtures/media"),
-    ("DARD/extracted_person_clips", "DARD_test/extracted_person_clips"),
-    ("DARD/extracted_image_detections", "DARD_test/extracted_image_detections"),
-    ("DARD/video_face_crops", "DARD_test/video_face_crops"),
-    ("DARD/image_face_crops", "DARD_test/image_face_crops"),
-    ("DARD/filtered_video_face_crops", "DARD_test/filtered_video_face_crops"),
-    ("DARD/filtered_image_face_crops", "DARD_test/filtered_image_face_crops"),
-    ("DARD/audio_transcriptions", "DARD_test/audio_transcriptions"),
-    ("DARD/preprocessed_documents", "DARD_test/preprocessed_documents"),
-    ("DARD/extracted_frames", "DARD_test/extracted_frames"),
-]
+# Every downloaded modality lives under ``{root}/archive_org_public_domain/<subdir>``,
+# so rewriting that one prefix redirects all four inputs at once.
+INPUT_BASE = re.compile(r"\{root\}/archive_org_public_domain")
+FIXTURE_MEDIA = "tests/fixtures/media"
+
+# Every derived output is ``{root}/<subdir>``, so repointing ``root`` itself sends the
+# whole output tree to DARD_test/ — including any stage added later, which a
+# per-directory list would silently leave writing into the real DARD/.
+ROOT_KEY = re.compile(r"^root:[ \t]*\S.*$", re.MULTILINE)
+TEST_ROOT = "DARD_test"
+
+# The download stage writes to ``base_output_dir`` (newer configs) rather than
+# ``{root}/archive_org_public_domain``. The fixture gate skips download, so this is
+# never written — but leaving the real dataset path here would let the "test" config
+# still name the production tree. Redirect it to the fixture too. Optional: absent in
+# older configs, so no raise if it's missing.
+BASE_OUTPUT_DIR = re.compile(r'^(base_output_dir:[ \t]*)"[^"]*"', re.MULTILINE)
+
+
+class TemplateMismatch(ValueError):
+    """The source config lacks the templated paths this redirect depends on.
+
+    Raised instead of writing a config, because a substitution that silently
+    matches nothing produces a "test" config that is really the production one —
+    reading the real dataset and writing the real output tree while the gate
+    compares an empty ``DARD_test/``. That is the failure this script exists to
+    prevent, so it must be loud.
+    """
+
+
+def render_test_config(src: str) -> str:
+    """Redirect production config text to the fixture inputs + throwaway outputs.
+
+    Rewrites the ``{root}/archive_org_public_domain`` input base to the fixture
+    media dir and the top-level ``root`` to ``DARD_test`` (which carries every
+    ``{root}/…`` output there at load time). Raises ``TemplateMismatch`` if
+    either target is absent, so a config whose templating drifted fails loudly
+    instead of yielding a production config wearing a test name.
+    """
+    out, n_inputs = INPUT_BASE.subn(FIXTURE_MEDIA, src)
+    out, n_root = ROOT_KEY.subn(f'root: "{TEST_ROOT}"', out)
+    out, _ = BASE_OUTPUT_DIR.subn(rf'\g<1>"{FIXTURE_MEDIA}"', out)
+    if not n_inputs:
+        raise TemplateMismatch("no '{root}/archive_org_public_domain' input paths found")
+    if n_root != 1:
+        raise TemplateMismatch(f"expected exactly one top-level 'root:' key, found {n_root}")
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,16 +80,16 @@ def main(argv: list[str] | None = None) -> int:
     if not src_path.exists():
         print(f"error: {src_path} not found", file=sys.stderr)
         return 2
-    src = src_path.read_text(encoding="utf-8")
-    for old, new in SUBSTITUTIONS:
-        src = src.replace(old, new)
-    out_path.write_text(src, encoding="utf-8")
-    leftover = [line for line in src.splitlines() if "DARD/" in line and "DARD_test" not in line]
-    if leftover:
-        print("warning: stray DARD/ lines in generated config:", file=sys.stderr)
-        for line in leftover[:5]:
-            print(f"  {line}", file=sys.stderr)
-    print(f"[make_test_config] wrote {out_path.relative_to(REPO_ROOT)}")
+    try:
+        out = render_test_config(src_path.read_text(encoding="utf-8"))
+    except TemplateMismatch as exc:
+        print(f"error: {exc} in {src_path.name}", file=sys.stderr)
+        return 2
+    out_path.write_text(out, encoding="utf-8")
+    print(
+        f"[make_test_config] wrote {out_path.relative_to(REPO_ROOT)} "
+        f"(inputs -> {FIXTURE_MEDIA}/, outputs -> {TEST_ROOT}/)"
+    )
     return 0
 
 
