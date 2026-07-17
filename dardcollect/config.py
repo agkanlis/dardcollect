@@ -320,6 +320,14 @@ class FaceCropConfig:
     min_free_disk_gb: float = 2.0
     include_audio: bool = True
     max_overlap_iou: float = 0.3
+    # ── Crop stabilization (opt-in, off by default) ──────────────────────────────
+    corner_smoothing_enabled: bool = False
+    corner_smoothing_window_seconds: float = 0.4
+    corner_smoothing_polyorder: int = 2
+    corner_smoothing_scale_mode: str = "constant"  # raw | smooth | constant (steady wide framing)
+    # raw | smooth | constant (constant = median roll, no wobble)
+    corner_smoothing_rotation_mode: str = "constant"
+    corner_smoothing_zoom: float = 1.15  # final scale multiplier; >1 widens the crop
 
     @classmethod
     def from_yaml(cls, yaml_path: str, section: str = "face_crop_extraction") -> "FaceCropConfig":
@@ -356,6 +364,12 @@ class FaceCropConfig:
             min_free_disk_gb=cfg.get("min_free_disk_gb", 2.0),
             include_audio=cfg.get("include_audio", True),
             max_overlap_iou=cfg.get("max_overlap_iou", 0.3),
+            corner_smoothing_enabled=cfg.get("corner_smoothing_enabled", False),
+            corner_smoothing_window_seconds=cfg.get("corner_smoothing_window_seconds", 0.4),
+            corner_smoothing_polyorder=cfg.get("corner_smoothing_polyorder", 2),
+            corner_smoothing_scale_mode=cfg.get("corner_smoothing_scale_mode", "constant"),
+            corner_smoothing_rotation_mode=cfg.get("corner_smoothing_rotation_mode", "constant"),
+            corner_smoothing_zoom=cfg.get("corner_smoothing_zoom", 1.15),
         )
 
 

@@ -307,6 +307,23 @@ face_crop_extraction:
   # when people pass close to each other.
   max_overlap_iou: 0.3
 
+  # ── Crop stabilization (opt-in, off by default) ──────────────────────────────
+  # Stops the per-frame shake/zoom by stabilizing the crop geometry per track:
+  # scale/rotation constants are computed once per track and shared by every run,
+  # so a detection gap cannot re-lock the geometry to a new angle.
+  # LOCATION is always smoothed (gentle pan). scale_mode/rotation_mode
+  # each: raw | smooth | constant. Default recipe = a steady, upright shot:
+  #   scale_mode: constant   -> locks zoom to a wide framing (no zoom wobble/zoom-in)
+  #   rotation_mode: constant -> locks roll to the track median (kills the ~±12° fit
+  #                              artifact; the source camera was not rolling)
+  #   zoom: 1.15             -> 15% wider margin around the face
+  corner_smoothing_enabled: false
+  corner_smoothing_window_seconds: 0.4   # Savitzky-Golay window (location pan); larger = smoother/laggier
+  corner_smoothing_polyorder: 2          # Savitzky-Golay polynomial order
+  corner_smoothing_scale_mode: constant     # raw | smooth | constant
+  corner_smoothing_rotation_mode: constant  # raw | smooth | constant
+  corner_smoothing_zoom: 1.15               # final scale multiplier; >1 widens the crop
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Image face crop extraction — pipeline/extract_face_crops_from_images.py

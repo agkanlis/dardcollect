@@ -17,6 +17,7 @@ import numpy as np
 
 from dardcollect.audio import _mux_audio
 from dardcollect.config import FaceCropConfig
+from dardcollect.crop_stabilization import _smooth_frame_data_corners
 from dardcollect.face_geometry import (
     ARCFACE_CROP_CORNERS_IN_OFIQ,
     OFIQ_SIZE,
@@ -325,6 +326,26 @@ def process_video(
         total_frames,
         total_frames / fps if fps > 0 else 0,
     )
+
+    # Opt-in crop stabilization: smooth the stored OFIQ corners per track BEFORE
+    # warping, so the rendered crop video stops shaking/zooming per frame.
+    if face_config.corner_smoothing_enabled:
+        n_sm = _smooth_frame_data_corners(
+            frame_data_orig,
+            fps,
+            face_config.corner_smoothing_window_seconds,
+            face_config.corner_smoothing_polyorder,
+            scale_mode=face_config.corner_smoothing_scale_mode,
+            rotation_mode=face_config.corner_smoothing_rotation_mode,
+            zoom=face_config.corner_smoothing_zoom,
+            face_config=face_config,
+        )
+        logger.info(
+            "  Corner stabilization ON (window=%.2fs, polyorder=%d): stabilized %d detection(s)",
+            face_config.corner_smoothing_window_seconds,
+            face_config.corner_smoothing_polyorder,
+            n_sm,
+        )
 
     # track_id → [(relative_frame_idx, ofiq_crop_or_None), ...]
     track_frames: dict[int, list[tuple[int, np.ndarray | None]]] = defaultdict(list)
